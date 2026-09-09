@@ -9,7 +9,7 @@ import InMemoryExporter
 import SignPostIntegration
 import XCTest
 
-#if os(iOS) || os(macOS)
+#if os(iOS) || os(macOS) || os(visionOS)
   import MetricKit
 #endif
 
@@ -44,6 +44,7 @@ final class SignPostIntegrationTests: XCTestCase {
       let processor = SignPostIntegration()
       let defaultLog = OSLog(subsystem: "OpenTelemetry", category: .pointsOfInterest)
 
+      XCTAssertTrue(processor.osLog === defaultLog)
       XCTAssertEqual(processor.osLog.signpostsEnabled, defaultLog.signpostsEnabled)
       assertSpanExport(processor, name: "signpost.default.legacy")
     }
@@ -64,7 +65,7 @@ final class SignPostIntegrationTests: XCTestCase {
     }
   #endif
 
-  #if os(iOS) || os(macOS)
+  #if os(iOS) || os(macOS) || os(visionOS)
     func testSignposterMetricKitLog() {
       let log = MXMetricManager.makeLogHandle(category: "OpenTelemetrySpans")
       let processor = OSSignposterIntegration(log: log)
@@ -73,13 +74,15 @@ final class SignPostIntegrationTests: XCTestCase {
       assertSpanExport(processor, name: "signpost.metrickit.modern")
     }
 
-    func testLegacyMetricKitLog() {
-      let log = MXMetricManager.makeLogHandle(category: "OpenTelemetrySpans")
-      let processor = SignPostIntegration(log: log)
+    #if !os(visionOS)
+      func testLegacyMetricKitLog() {
+        let log = MXMetricManager.makeLogHandle(category: "OpenTelemetrySpans")
+        let processor = SignPostIntegration(log: log)
 
-      XCTAssertTrue(processor.osLog === log)
-      assertSpanExport(processor, name: "signpost.metrickit.legacy")
-    }
+        XCTAssertTrue(processor.osLog === log)
+        assertSpanExport(processor, name: "signpost.metrickit.legacy")
+      }
+    #endif
   #endif
 
   private func assertSpanExport(_ processor: SpanProcessor, name: String,
