@@ -10,6 +10,9 @@ instrumented with opentelemetry to show their spans in a profiling app like `Ins
 - **iOS 13-14, tvOS 13-14**:
   Use **`SignPostIntegration`**, which relies on the traditional `os_signpost` API.
 
+These ranges follow the deployment targets in [`Package.swift`](../../../Package.swift).
+The legacy class is annotated for iOS/tvOS 12, but this package requires iOS/tvOS 13 or later.
+
 The legacy processor is not available on watchOS or visionOS.
 
 ## Usage 
