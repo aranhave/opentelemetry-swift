@@ -47,8 +47,9 @@ final class SessionTests: XCTestCase {
 
   func testSessionEqualityIncludesSamplingDecision() {
     let expireTime = Date()
-    let sampled = Session(id: "session", expireTime: expireTime, samplingDecision: .sampled)
-    let notSampled = Session(id: "session", expireTime: expireTime, samplingDecision: .notSampled)
+    let startTime = Date()
+    let sampled = Session(id: "session", expireTime: expireTime, startTime: startTime, samplingDecision: .sampled)
+    let notSampled = Session(id: "session", expireTime: expireTime, startTime: startTime, samplingDecision: .notSampled)
 
     XCTAssertNotEqual(sampled, notSampled)
   }

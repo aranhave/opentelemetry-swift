@@ -81,6 +81,21 @@ public struct Session: Equatable, Sendable {
     self.samplingDecision = samplingDecision
   }
 
+  // Preserve the existing public equality symbol for API compatibility.
+  // swiftformat:disable redundantEquatable
+  /// Two sessions are equal when their identity, timing, and sampling decision match.
+  public static func == (lhs: Session, rhs: Session) -> Bool {
+    return lhs.expireTime == rhs.expireTime &&
+      lhs.id == rhs.id &&
+      lhs.previousId == rhs.previousId &&
+      lhs.startTime == rhs.startTime &&
+      lhs.sessionTimeout == rhs.sessionTimeout &&
+      lhs.maxLifetime == rhs.maxLifetime &&
+      lhs.samplingDecision == rhs.samplingDecision
+  }
+
+  // swiftformat:enable redundantEquatable
+
   /// Checks if the session has expired
   /// - Returns: True if the current time is past the session's inactivity expiry or maximum lifetime
   public func isExpired() -> Bool {
