@@ -52,13 +52,13 @@ public class SessionLogRecordProcessor: LogRecordProcessor {
     nextProcessor.onEmit(logRecord: enhancedRecord)
   }
 
-  /// Shuts down the processor - no cleanup needed
+  /// Shuts down the processor by delegating to the next processor in the chain
   public func shutdown(explicitTimeout: TimeInterval?) -> ExportResult {
-    return .success
+    return nextProcessor.shutdown(explicitTimeout: explicitTimeout)
   }
 
-  /// Forces a flush of any pending data - no action needed
+  /// Forces a flush of any pending data by delegating to the next processor in the chain
   public func forceFlush(explicitTimeout: TimeInterval?) -> ExportResult {
-    return .success
+    return nextProcessor.forceFlush(explicitTimeout: explicitTimeout)
   }
 }
