@@ -78,6 +78,38 @@ final class SessionStoreTests: XCTestCase {
     XCTAssertEqual(store.load()?.id, "session-2")
   }
 
+  func testConcurrentSaveAndLoadReturnsCompleteSession() throws {
+    let first = Session(
+      id: "session-1",
+      expireTime: Date(timeIntervalSince1970: 1_000),
+      previousId: "previous-1",
+      startTime: Date(timeIntervalSince1970: 100),
+      sessionTimeout: 900,
+      maxLifetime: 1_800
+    )
+    let second = Session(
+      id: "session-2",
+      expireTime: Date(timeIntervalSince1970: 2_000),
+      previousId: "previous-2",
+      startTime: Date(timeIntervalSince1970: 200),
+      sessionTimeout: 1_800,
+      maxLifetime: nil
+    )
+    let store = try XCTUnwrap(store)
+    let resultLock = NSLock()
+    nonisolated(unsafe) var unexpectedSessions: [Session] = []
+
+    DispatchQueue.concurrentPerform(iterations: 200) { index in
+      if index.isMultiple(of: 2) {
+        store.saveImmediately(session: index.isMultiple(of: 4) ? first : second)
+      } else if let loaded = store.load(), loaded != first, loaded != second {
+        resultLock.withLock { unexpectedSessions.append(loaded) }
+      }
+    }
+
+    XCTAssertTrue(unexpectedSessions.isEmpty)
+  }
+
   func testRejectedImmediateWriteRetriesWithoutAnotherSaveCall() throws {
     let persistence = ToggleSessionPersistence(acceptsWrites: false)
     let store = SessionStore(persistence: persistence, saveInterval: 0.01)

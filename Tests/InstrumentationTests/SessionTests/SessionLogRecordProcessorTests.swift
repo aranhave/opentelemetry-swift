@@ -145,14 +145,95 @@ final class SessionLogRecordProcessorTests: XCTestCase {
     }
   }
 
-  func testShutdownReturnsSuccess() {
+  func testShutdownDelegatesToNextProcessor() {
     let result = logRecordProcessor.shutdown(explicitTimeout: 5.0)
+
     XCTAssertEqual(result, .success)
+    XCTAssertEqual(mockNextProcessor.shutdownCalls.count, 1)
+    XCTAssertEqual(mockNextProcessor.shutdownCalls[0], 5.0)
   }
 
-  func testForceFlushReturnsSuccess() {
+  func testForceFlushDelegatesToNextProcessor() {
     let result = logRecordProcessor.forceFlush(explicitTimeout: 5.0)
+
     XCTAssertEqual(result, .success)
+    XCTAssertEqual(mockNextProcessor.forceFlushCalls.count, 1)
+    XCTAssertEqual(mockNextProcessor.forceFlushCalls[0], 5.0)
+  }
+
+  func testShutdownPropagatesNilTimeout() {
+    _ = logRecordProcessor.shutdown(explicitTimeout: nil)
+
+    XCTAssertEqual(mockNextProcessor.shutdownCalls.count, 1)
+    XCTAssertNil(mockNextProcessor.shutdownCalls[0])
+  }
+
+  func testForceFlushPropagatesNilTimeout() {
+    _ = logRecordProcessor.forceFlush(explicitTimeout: nil)
+
+    XCTAssertEqual(mockNextProcessor.forceFlushCalls.count, 1)
+    XCTAssertNil(mockNextProcessor.forceFlushCalls[0])
+  }
+
+  func testShutdownPropagatesFailureFromNextProcessor() {
+    mockNextProcessor.shutdownResult = .failure
+
+    let result = logRecordProcessor.shutdown(explicitTimeout: 5.0)
+
+    XCTAssertEqual(result, .failure)
+  }
+
+  func testForceFlushPropagatesFailureFromNextProcessor() {
+    mockNextProcessor.forceFlushResult = .failure
+
+    let result = logRecordProcessor.forceFlush(explicitTimeout: 5.0)
+
+    XCTAssertEqual(result, .failure)
+  }
+
+  /// End-to-end coverage for the reported case: a real batching processor behind the session
+  /// processor must still be reachable by `forceFlush` and `shutdown`. The session processor is
+  /// the only handle the caller has, since `LoggerProviderSdk` exposes neither operation.
+  private func makeBatchingProvider(exporter: LogRecordExporter) -> (LoggerProviderSdk, SessionLogRecordProcessor) {
+    let batch = BatchLogRecordProcessor(logRecordExporter: exporter, scheduleDelay: 60)
+    let session = SessionLogRecordProcessor(nextProcessor: batch, sessionManager: MockSessionManager())
+    return (LoggerProviderBuilder().with(processors: [session]).build(), session)
+  }
+
+  func testForceFlushExportsRecordsQueuedInWrappedBatchProcessor() {
+    let exporter = InMemoryLogRecordExporter()
+    let (provider, session) = makeBatchingProvider(exporter: exporter)
+    defer { _ = session.shutdown(explicitTimeout: nil) }
+
+    provider.get(instrumentationScopeName: "test")
+      .logRecordBuilder()
+      .setBody(.string("hello"))
+      .emit()
+
+    XCTAssertTrue(exporter.getFinishedLogRecords().isEmpty, "Record should still be queued in the batch processor")
+
+    let result = session.forceFlush(explicitTimeout: 5.0)
+
+    XCTAssertEqual(result, .success)
+    XCTAssertEqual(exporter.getFinishedLogRecords().count, 1)
+    XCTAssertEqual(exporter.getFinishedLogRecords()[0].body?.description, "hello")
+  }
+
+  func testShutdownExportsRecordsQueuedInWrappedBatchProcessor() {
+    let exporter = CountingLogRecordExporter()
+    let (provider, session) = makeBatchingProvider(exporter: exporter)
+
+    provider.get(instrumentationScopeName: "test")
+      .logRecordBuilder()
+      .setBody(.string("goodbye"))
+      .emit()
+
+    XCTAssertEqual(exporter.exportedCount, 0, "Record should still be queued in the batch processor")
+
+    let result = session.shutdown(explicitTimeout: 5.0)
+
+    XCTAssertEqual(result, .success)
+    XCTAssertEqual(exporter.exportedCount, 1, "Shutdown should drain the wrapped batch processor")
   }
 
   func testSessionStartEventPreservesExistingAttributes() {
@@ -329,9 +410,31 @@ final class SessionLogRecordProcessorTests: XCTestCase {
 class MockLogRecordProcessor: LogRecordProcessor, @unchecked Sendable {
   private let queue = DispatchQueue(label: "MockLogRecordProcessor")
   private var _receivedLogRecords: [ReadableLogRecord] = []
+  private var _shutdownCalls: [TimeInterval?] = []
+  private var _forceFlushCalls: [TimeInterval?] = []
+  private var _shutdownResult: ExportResult = .success
+  private var _forceFlushResult: ExportResult = .success
 
   var receivedLogRecords: [ReadableLogRecord] {
     return queue.sync { _receivedLogRecords }
+  }
+
+  var shutdownCalls: [TimeInterval?] {
+    return queue.sync { _shutdownCalls }
+  }
+
+  var forceFlushCalls: [TimeInterval?] {
+    return queue.sync { _forceFlushCalls }
+  }
+
+  var shutdownResult: ExportResult {
+    get { queue.sync { _shutdownResult } }
+    set { queue.sync { _shutdownResult = newValue } }
+  }
+
+  var forceFlushResult: ExportResult {
+    get { queue.sync { _forceFlushResult } }
+    set { queue.sync { _forceFlushResult = newValue } }
   }
 
   func onEmit(logRecord: ReadableLogRecord) {
@@ -341,8 +444,34 @@ class MockLogRecordProcessor: LogRecordProcessor, @unchecked Sendable {
   }
 
   func shutdown(explicitTimeout: TimeInterval?) -> ExportResult {
+    return queue.sync {
+      _shutdownCalls.append(explicitTimeout)
+      return _shutdownResult
+    }
+  }
+
+  func forceFlush(explicitTimeout: TimeInterval?) -> ExportResult {
+    return queue.sync {
+      _forceFlushCalls.append(explicitTimeout)
+      return _forceFlushResult
+    }
+  }
+}
+
+class CountingLogRecordExporter: LogRecordExporter, @unchecked Sendable {
+  private let queue = DispatchQueue(label: "CountingLogRecordExporter")
+  private var _exportedCount = 0
+
+  var exportedCount: Int {
+    return queue.sync { _exportedCount }
+  }
+
+  func export(logRecords: [ReadableLogRecord], explicitTimeout: TimeInterval?) -> ExportResult {
+    queue.sync { _exportedCount += logRecords.count }
     return .success
   }
+
+  func shutdown(explicitTimeout: TimeInterval?) {}
 
   func forceFlush(explicitTimeout: TimeInterval?) -> ExportResult {
     return .success
